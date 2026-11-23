@@ -1,6 +1,7 @@
 import { CategoryRepository } from '../../../src/repositories/category.repository';
 import prisma from '../../../src/lib/prisma';
 
+
 jest.mock('../../../src/lib/prisma', () => ({
   category: {
     findUnique: jest.fn(),

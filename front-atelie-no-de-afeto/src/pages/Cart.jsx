@@ -67,7 +67,7 @@ function Cart() {
     setError("");
     try {
       const res = await fetch(
-        `${process.env.REACT_APP_API_URL || "http://localhost:3333/api"}/orders`,
+        `${process.env.REACT_APP_API_URL}/orders`,
         {
           method: "POST",
           headers: {

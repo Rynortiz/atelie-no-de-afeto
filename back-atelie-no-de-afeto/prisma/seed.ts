@@ -1,6 +1,7 @@
 /// <reference types="node" />
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+const BASE_URL = "";
 
 const prisma = new PrismaClient();
 
@@ -48,7 +49,7 @@ async function main() {
           "Uma peça marcante, confortável e cheia de estilo — mistura o clássico artesanal com um toque moderno.",
         price: 180.0,
         stock: 50,
-        imageUrl: "http://localhost:3333/uploads/bf3b783c2a4626a9cff77b15.jpeg",
+        imageUrl: `${BASE_URL}/uploads/bf3b783c2a4626a9cff77b15.jpeg`,
         categoryId: vestidos.id,
       },
       {
@@ -57,7 +58,7 @@ async function main() {
           "Delicada e estilosa, perfeita para compor looks leves e românticos.",
         price: 75.5,
         stock: 30,
-        imageUrl: "http://localhost:3333/uploads/ac5f33677b16d918e11ec49d.jpeg",
+        imageUrl: `${BASE_URL}/uploads/ac5f33677b16d918e11ec49d.jpeg`,
         categoryId: bolsas.id,
       },
       {
@@ -66,7 +67,7 @@ async function main() {
           "Ideais para decoração, trazendo aconchego e um toque fofo ao ambiente.",
         price: 35.5,
         stock: 20,
-        imageUrl: "http://localhost:3333/uploads/a018a2dad74f8f2eafba1489.jpeg",
+        imageUrl: `${BASE_URL}/uploads/a018a2dad74f8f2eafba1489.jpeg`,
         categoryId: almofadas.id,
       },
     ],

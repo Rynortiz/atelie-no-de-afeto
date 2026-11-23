@@ -107,7 +107,6 @@ function Profile() {
               className="profile-email-lock"
               title="E-mail não pode ser alterado"
             >
-              🔒
             </span>
           </div>
 

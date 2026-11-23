@@ -1,0 +1,33 @@
+{
+  "name": "atelie-no-de-afeto",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Orquestração, testes E2E e hooks de git do projeto Ateliê Nós de Afeto",
+  "scripts": {
+    "up": "docker compose up -d --build",
+    "down": "docker compose down",
+    "logs": "docker compose logs -f",
+    "setup": "bash setup.sh",
+    "cy:open": "cypress open",
+    "cy:run": "cypress run",
+    "test:e2e": "cypress run",
+    "prepare": "husky",
+    "dev:up": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d",
+    "dev:down": "docker compose down",
+    "dev:logs": "docker compose logs -f backend",
+    "dev:rebuild": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "@react-native-community/cli": "^20.2.0",
+    "cypress": "^13.15.0",
+    "husky": "^9.1.6"
+  },
+  "dependencies": {
+    "compose": "^0.1.2",
+    "docker": "^1.0.0",
+    "ioredis": "^6.1.0"
+
+  }
+}

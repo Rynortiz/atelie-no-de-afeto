@@ -1,3 +1,4 @@
+import { beforeEach, describe, it, expect, jest } from "@jest/globals";
 import request from "supertest";
 import { CartService } from "../../src/services/cart.service";
 import app from "../../src/app";
@@ -19,9 +20,11 @@ const makeCarrinho = (itens: object[] = []) => ({
   items: itens,
 });
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
-// ─── GET /api/carrinho ────────────────────────────────────────
+// ─── GET /api/carrinho ──────
 describe("GET /api/carrinho", () => {
   it("retorna 200 com o carrinho do usuário autenticado", async () => {
     mockGetCart.mockResolvedValue(makeCarrinho() as never);
@@ -56,7 +59,7 @@ describe("GET /api/carrinho", () => {
   });
 });
 
-// ─── POST /api/carrinho/itens ─────────────────────────────────
+// ─── POST /api/carrinho/itens ───
 describe("POST /api/carrinho/itens", () => {
   it("retorna 200 ao adicionar item com estoque disponível", async () => {
     mockAddItem.mockResolvedValue(
@@ -130,7 +133,7 @@ describe("POST /api/carrinho/itens", () => {
   });
 });
 
-// ─── PUT /api/carrinho/itens/:produtoId ──────────────────────
+// ─── PUT /api/carrinho/itens/:produtoId ─────
 describe("PUT /api/carrinho/itens/:produtoId", () => {
   it("retorna 200 ao atualizar quantidade", async () => {
     mockUpdateItem.mockResolvedValue(
@@ -182,7 +185,7 @@ describe("PUT /api/carrinho/itens/:produtoId", () => {
   });
 });
 
-// ─── DELETE /api/carrinho/itens/:produtoId ───────────────────
+// ─── DELETE /api/carrinho/itens/:produtoId ─────
 describe("DELETE /api/carrinho/itens/:produtoId", () => {
   it("retorna 200 ao remover item específico", async () => {
     mockRemoveItem.mockResolvedValue(makeCarrinho() as never);
@@ -207,7 +210,7 @@ describe("DELETE /api/carrinho/itens/:produtoId", () => {
   });
 });
 
-// ─── DELETE /api/carrinho ─────────────────────────────────────
+// ─── DELETE /api/carrinho ───────
 describe("DELETE /api/carrinho", () => {
   it("retorna 204 ao limpar o carrinho completamente", async () => {
     mockClear.mockResolvedValue(undefined as never);

@@ -1,3 +1,11 @@
+import {
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+  expect,
+  jest,
+} from "@jest/globals";
 import request from "supertest";
 
 interface MockUserService {
@@ -27,8 +35,9 @@ let mock: jest.Mocked<UserService>;
 beforeAll(() => {
   mock = MockedUserService.mock.instances[0] as jest.Mocked<UserService>;
 });
-beforeEach(() => jest.clearAllMocks());
-
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 describe("GET /api/users", () => {
   it("deve retornar 200 com lista paginada", async () => {
     mock.findAll.mockResolvedValue({

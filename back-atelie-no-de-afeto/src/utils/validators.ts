@@ -1,4 +1,4 @@
-import { cpf } from 'cpf-cnpj-validator';
+import { cpf } from "cpf-cnpj-validator";
 
 export const isValidEmail = (email: string): boolean =>
   /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
@@ -16,4 +16,4 @@ export const isValidCpf = (value: string): boolean => cpf.isValid(value);
 export const cleanCpf = (value: string): string => cpf.strip(value);
 
 export const passwordStrengthMessage = (): string =>
-  'A senha deve ter no mínimo 8 caracteres, uma letra maiúscula, uma minúscula e um número.';
+  "A senha deve ter no mínimo 8 caracteres, uma letra maiúscula, uma minúscula e um número.";

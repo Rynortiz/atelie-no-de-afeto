@@ -1,3 +1,11 @@
+import {
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+  expect,
+  jest,
+} from "@jest/globals";
 import request from "supertest";
 
 interface MockCategoryService {
@@ -32,7 +40,9 @@ beforeAll(() => {
   mock = MockedCategoryService.mock
     .instances[0] as jest.Mocked<CategoryService>;
 });
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 describe("GET /api/categories", () => {
   it("deve retornar 200 com lista paginada", async () => {

@@ -1,0 +1,110 @@
+services:
+  # ─── Banco de dados ────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: nda_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: nda_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly no
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ─── Backend (API) ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./back-atelie-no-de-afeto
+      dockerfile: Dockerfile
+    container_name: nda_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "mysql://${DB_USER}:${DB_PASSWORD}@db:3306/${DB_NAME}"
+      REDIS_URL: "redis://redis:6379"
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+      PORT: ${BACKEND_PORT}
+      BASE_URL: ${BASE_URL}
+      NODE_ENV: ${NODE_ENV}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ─── Frontend (build estático) ─────────────────────────────
+  frontend:
+    build:
+      context: ./front-atelie-no-de-afeto
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_URL: ${FRONTEND_API_URL}
+    container_name: nda_frontend
+    restart: unless-stopped
+    networks:
+      - internal
+
+  # ─── Nginx (proxy reverso + TLS) ───────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nda_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"     # HTTP  → redireciona para HTTPS
+      - "443:443"   # HTTPS → ponto de entrada da aplicação
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - internal
+
+# ─── Volumes nomeados (persistência) ─────────────────────────
+volumes:
+  db_data:
+    driver: local
+  uploads_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# ─── Redes ───────────────────────────────────────────────────
+networks:
+  internal:
+    driver: bridge

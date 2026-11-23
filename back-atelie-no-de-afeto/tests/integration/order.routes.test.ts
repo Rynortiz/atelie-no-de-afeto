@@ -1,3 +1,11 @@
+import {
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+  expect,
+  jest,
+} from "@jest/globals";
 import request from "supertest";
 
 interface MockOrderService {
@@ -31,7 +39,9 @@ let mock: jest.Mocked<OrderService>;
 beforeAll(() => {
   mock = MockedOrderService.mock.instances[0] as jest.Mocked<OrderService>;
 });
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 describe("GET /api/orders", () => {
   it("deve retornar 200 com lista paginada", async () => {

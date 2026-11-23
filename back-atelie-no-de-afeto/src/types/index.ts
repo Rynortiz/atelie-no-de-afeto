@@ -1,4 +1,4 @@
-import { OrderStatus, Role } from '@prisma/client';
+import { OrderStatus, Role } from "@prisma/client";
 
 // ─── Pagination ──────
 export interface PaginationQuery {
@@ -57,8 +57,12 @@ export interface UpdateUserInput {
 }
 
 // ─── Category ─────
-export interface CreateCategoryInput { name: string }
-export interface UpdateCategoryInput { name: string }
+export interface CreateCategoryInput {
+  name: string;
+}
+export interface UpdateCategoryInput {
+  name: string;
+}
 
 // ─── Product ─────
 export interface CreateProductInput {
@@ -80,9 +84,16 @@ export interface UpdateProductInput {
 }
 
 // ─── Order ────
-export interface OrderItemInput { productId: string; quantity: number }
-export interface CreateOrderInput { items: OrderItemInput[] }
-export interface UpdateOrderStatusInput { status: OrderStatus }
+export interface OrderItemInput {
+  productId: string;
+  quantity: number;
+}
+export interface CreateOrderInput {
+  items: OrderItemInput[];
+}
+export interface UpdateOrderStatusInput {
+  status: OrderStatus;
+}
 
 // ─── Express augmentation ──
 export { Role };

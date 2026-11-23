@@ -1,0 +1,4 @@
+echo "→ Executando testes E2E (Cypress) antes do push..."
+echo "  (a stack precisa estar no ar: docker compose up -d)"
+
+npm run test:e2e

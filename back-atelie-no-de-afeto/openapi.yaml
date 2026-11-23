@@ -1,0 +1,1391 @@
+openapi: 3.0.3
+
+info:
+  title: Ateliê Nós de Afeto — API
+  description: |
+    API REST da plataforma de catálogo, estoque e pedidos do Ateliê Nós de
+    Afeto. Atende tanto a interface web quanto o aplicativo móvel.
+
+    ## Autenticação
+
+    A maior parte das operações de escrita exige um token JWT no cabeçalho
+    `Authorization: Bearer <token>`, obtido em `POST /auth/login`.
+
+    O token carrega o identificador do usuário e o papel (`CLIENT` ou
+    `ADMIN`). A autorização é sempre verificada no servidor — esconder um
+    botão na interface não é controle de acesso.
+
+    ## Correlação
+
+    Toda resposta traz o cabeçalho `x-correlation-id`. O cliente pode enviá-lo
+    na requisição para manter o mesmo identificador ao longo de um fluxo; se
+    não enviar, a API gera um. É por ele que se rastreia uma requisição nos
+    logs.
+
+    ## Paginação
+
+    As listagens aceitam `page` e `limit` e devolvem os dados em `data`, com
+    os totais em `meta`.
+  version: 1.0.0
+  contact:
+    name: Ateliê Nós de Afeto
+
+servers:
+  - url: https://meuapp.local/api
+    description: Ambiente local com TLS, atrás do Nginx
+  - url: http://localhost:3333/api
+    description: API direta, apenas em desenvolvimento
+
+tags:
+  - name: Autenticação
+    description: Cadastro e emissão de token
+  - name: Produtos
+    description: Catálogo de peças
+  - name: Categorias
+    description: Agrupamento das peças
+  - name: Usuários
+    description: Perfil e gestão de contas
+  - name: Carrinho
+    description: Carrinho de compras do usuário autenticado
+  - name: Pedidos
+    description: Pedidos realizados e seu acompanhamento
+  - name: Upload
+    description: Imagens dos produtos
+  - name: Operação
+    description: Saúde da aplicação
+
+paths:
+  /auth/register:
+    post:
+      tags: [Autenticação]
+      summary: Cria uma conta de cliente
+      description: |
+        Cria um usuário com papel `CLIENT`. O papel **não** é aceito do corpo
+        da requisição: é fixado pelo servidor, para que um visitante não possa
+        se conceder privilégios administrativos.
+
+        O CPF é validado pelos dígitos verificadores e aceito com ou sem
+        máscara. E-mail e CPF são únicos no sistema.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntradaCadastro'
+      responses:
+        '201':
+          description: Conta criada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Usuário cadastrado com sucesso.
+                  user:
+                    $ref: '#/components/schemas/Usuario'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '409':
+          description: E-mail ou CPF já cadastrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              example:
+                message: E-mail já cadastrado.
+
+  /auth/login:
+    post:
+      tags: [Autenticação]
+      summary: Autentica e emite um token
+      description: |
+        Devolve o token JWT e os dados do usuário, sem a senha.
+
+        A resposta para senha incorreta e para e-mail inexistente é
+        deliberadamente idêntica — distinguir as duas permitiria descobrir
+        quais e-mails estão cadastrados.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: admin@nosdeafeto.com
+                password:
+                  type: string
+                  format: password
+                  example: Admin123
+      responses:
+        '200':
+          description: Autenticado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  user:
+                    $ref: '#/components/schemas/Usuario'
+        '401':
+          description: Credenciais inválidas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              example:
+                message: Credenciais inválidas.
+
+  /products:
+    get:
+      tags: [Produtos]
+      summary: Lista produtos
+      description: |
+        Leitura pública — a vitrine precisa funcionar antes do login.
+
+        Esta é a consulta mais frequente do sistema e a que menos muda, por
+        isso é servida por cache (ver ADR-003). O cache é transparente para o
+        cliente: a resposta é idêntica venha ela do Redis ou do MySQL.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/Limite'
+      responses:
+        '200':
+          description: Página de produtos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Produto'
+                  meta:
+                    $ref: '#/components/schemas/MetaPaginacao'
+
+    post:
+      tags: [Produtos]
+      summary: Cadastra um produto
+      description: |
+        Exclusivo de administradores.
+
+        Ao concluir, as listagens em cache são invalidadas e um evento
+        `catalogo.produto.criado` é publicado.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntradaProduto'
+      responses:
+        '201':
+          description: Produto criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Produto criado com sucesso.
+                  product:
+                    $ref: '#/components/schemas/Produto'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          description: Categoria não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+  /products/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdDoRecurso'
+
+    get:
+      tags: [Produtos]
+      summary: Detalha um produto
+      security: []
+      responses:
+        '200':
+          description: Produto encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Produto'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    put:
+      tags: [Produtos]
+      summary: Atualiza um produto
+      description: |
+        Exclusivo de administradores. Invalida a chave do produto e todas as
+        listagens em cache, e publica `catalogo.produto.atualizado`.
+
+        Quando o estoque chega a zero, publica também
+        `catalogo.estoque.esgotado`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntradaProduto'
+      responses:
+        '200':
+          description: Produto atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Produto atualizado com sucesso.
+                  product:
+                    $ref: '#/components/schemas/Produto'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    delete:
+      tags: [Produtos]
+      summary: Exclui um produto
+      description: |
+        Exclusivo de administradores.
+
+        Um produto com pedidos vinculados **não** pode ser excluído: apagá-lo
+        destruiria o histórico de vendas. A API responde 400 nesse caso.
+
+        A imagem associada é removida do disco junto com o registro.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Produto excluído
+        '400':
+          description: Produto possui pedidos vinculados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              example:
+                message: Não é possível excluir um produto que possui pedidos vinculados.
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /categories:
+    get:
+      tags: [Categorias]
+      summary: Lista categorias
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/Limite'
+      responses:
+        '200':
+          description: Página de categorias
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Categoria'
+                  meta:
+                    $ref: '#/components/schemas/MetaPaginacao'
+
+    post:
+      tags: [Categorias]
+      summary: Cria uma categoria
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: Amigurumis
+      responses:
+        '201':
+          description: Categoria criada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Categoria'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+        '409':
+          description: Já existe categoria com esse nome
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+  /categories/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdDoRecurso'
+
+    get:
+      tags: [Categorias]
+      summary: Detalha uma categoria
+      security: []
+      responses:
+        '200':
+          description: Categoria encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Categoria'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    put:
+      tags: [Categorias]
+      summary: Renomeia uma categoria
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        '200':
+          description: Categoria atualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Categoria'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    delete:
+      tags: [Categorias]
+      summary: Exclui uma categoria
+      description: |
+        Uma categoria com produtos associados não pode ser excluída — todo
+        produto precisa pertencer a exatamente uma categoria, e removê-la
+        deixaria produtos órfãos.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Categoria excluída
+        '400':
+          description: Categoria possui produtos associados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /users:
+    get:
+      tags: [Usuários]
+      summary: Lista os usuários
+      description: |
+        Exclusivo de administradores.
+
+        A senha nunca aparece na resposta, nem como hash — um hash exposto
+        permite ataque de dicionário offline, sem deixar rastro no servidor.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/Limite'
+      responses:
+        '200':
+          description: Página de usuários
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Usuario'
+                  meta:
+                    $ref: '#/components/schemas/MetaPaginacao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+
+  /users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdDoRecurso'
+
+    get:
+      tags: [Usuários]
+      summary: Detalha um usuário
+      description: |
+        Um cliente acessa apenas o próprio perfil; o administrador acessa
+        qualquer um. A verificação compara o id do caminho com o do token,
+        no servidor.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Usuário encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usuario'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          description: O perfil pertence a outro usuário
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    put:
+      tags: [Usuários]
+      summary: Atualiza o perfil
+      description: |
+        Um cliente altera apenas o próprio perfil.
+
+        O campo `role` **não** é aceito aqui: a promoção a administrador não
+        é auto-atribuível. Enviá-lo não produz erro — o campo é ignorado,
+        porque recusar a requisição inteira revelaria que o campo existe.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntradaAtualizacaoUsuario'
+      responses:
+        '200':
+          description: Perfil atualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usuario'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          description: O perfil pertence a outro usuário
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: E-mail ou CPF já usado por outra conta
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+    delete:
+      tags: [Usuários]
+      summary: Exclui uma conta
+      description: |
+        O usuário pode excluir a própria conta; o administrador pode excluir
+        qualquer uma.
+
+        Uma conta com pedidos vinculados não pode ser removida: apagá-la
+        destruiria o histórico de vendas, que precisa permanecer íntegro.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Conta excluída
+        '400':
+          description: A conta possui pedidos vinculados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          description: A conta pertence a outro usuário
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /carrinho:
+    get:
+      tags: [Carrinho]
+      summary: Consulta o carrinho do usuário
+      description: |
+        Devolve o carrinho do usuário autenticado, com os itens e o total.
+
+        Não há identificador de carrinho no caminho: cada usuário tem no
+        máximo um, e ele é resolvido a partir do token. Aceitar um id aqui
+        permitiria a um usuário ler o carrinho de outro.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Carrinho do usuário
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Carrinho'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+    delete:
+      tags: [Carrinho]
+      summary: Esvazia o carrinho
+      description: Remove todos os itens, mantendo o carrinho.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Carrinho esvaziado
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /carrinho/itens:
+    post:
+      tags: [Carrinho]
+      summary: Adiciona um item ao carrinho
+      description: |
+        Acrescenta um produto ao carrinho do usuário autenticado.
+
+        O preço **não** é aceito do cliente: ele é lido do catálogo no
+        momento do fechamento do pedido. Aceitá-lo aqui permitiria ao
+        cliente escolher quanto pagar.
+
+        Um produto ocupa no máximo uma linha por carrinho — há restrição de
+        unicidade no banco sobre o par carrinho e produto. Adicionar um
+        produto que já está lá **soma** à quantidade existente em vez de
+        criar uma segunda linha.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntradaItemCarrinho'
+      responses:
+        '201':
+          description: Item adicionado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Carrinho'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          description: Produto não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+  /carrinho/itens/{produtoId}:
+    parameters:
+      - name: produtoId
+        in: path
+        required: true
+        description: Identificador do produto, não do item de carrinho.
+        schema:
+          type: string
+          format: uuid
+
+    put:
+      tags: [Carrinho]
+      summary: Altera a quantidade de um item
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantidade]
+              properties:
+                quantidade:
+                  type: integer
+                  minimum: 1
+                  example: 2
+      responses:
+        '200':
+          description: Quantidade atualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Carrinho'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    delete:
+      tags: [Carrinho]
+      summary: Remove um item do carrinho
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Item removido
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /orders:
+    get:
+      tags: [Pedidos]
+      summary: Lista todos os pedidos
+      description: |
+        Exclusivo de administradores: devolve os pedidos de todos os
+        usuários.
+
+        Um cliente que precise ver os próprios pedidos usa
+        `GET /orders/my-orders`, que é filtrado pelo token.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/Limite'
+      responses:
+        '200':
+          description: Página de pedidos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Pedido'
+                  meta:
+                    $ref: '#/components/schemas/MetaPaginacao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+
+    post:
+      tags: [Pedidos]
+      summary: Fecha o pedido
+      description: |
+        Converte o carrinho do usuário em um pedido.
+
+        É a operação mais sensível da API, e a única que precisa ser
+        atômica de ponta a ponta: o estoque é debitado e o pedido criado
+        na mesma transação. Sem isso, duas compras simultâneas da última
+        peça poderiam ambas ter sucesso.
+
+        O preço de cada item é **copiado** do catálogo neste momento. Essa
+        cópia é deliberada: um reajuste futuro não pode reescrever o valor
+        de uma venda já realizada.
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Pedido criado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        '400':
+          description: Carrinho vazio ou estoque insuficiente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              examples:
+                vazio:
+                  value:
+                    message: O carrinho está vazio.
+                estoque:
+                  value:
+                    message: Estoque insuficiente para um dos itens.
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /orders/my-orders:
+    get:
+      tags: [Pedidos]
+      summary: Lista os pedidos do usuário autenticado
+      description: |
+        Filtrado pelo identificador que vem no token, nunca por parâmetro —
+        um parâmetro permitiria pedir os pedidos de outro usuário.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/Limite'
+      responses:
+        '200':
+          description: Página de pedidos do usuário
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Pedido'
+                  meta:
+                    $ref: '#/components/schemas/MetaPaginacao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /orders/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdDoRecurso'
+
+    get:
+      tags: [Pedidos]
+      summary: Detalha um pedido
+      description: |
+        Um cliente só acessa os próprios pedidos; o administrador acessa
+        qualquer um. A verificação acontece no servidor, a partir do token.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pedido encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          description: O pedido pertence a outro usuário
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    delete:
+      tags: [Pedidos]
+      summary: Exclui um pedido
+      description: Exclusivo de administradores.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Pedido excluído
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /orders/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/IdDoRecurso'
+
+    patch:
+      tags: [Pedidos]
+      summary: Altera o status do pedido
+      description: |
+        Exclusivo de administradores. É o que move o pedido ao longo do
+        fluxo de atendimento.
+
+        PATCH e não PUT porque apenas um campo muda — o restante do pedido
+        permanece como está.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  $ref: '#/components/schemas/StatusPedido'
+      responses:
+        '200':
+          description: Status atualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        '400':
+          description: Transição de status inválida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /upload/imagem:
+    post:
+      tags: [Upload]
+      summary: Envia a imagem de um produto
+      description: |
+        Exclusivo de administradores. Recebe um arquivo no campo `image`.
+
+        A validação ocorre em duas frentes, porque nenhuma basta sozinha: o
+        tipo MIME declarado **e** a extensão do arquivo. Um arquivo
+        executável renomeado para `.jpg` falha na primeira; um JPEG renomeado
+        para `.exe` falha na segunda.
+
+        O nome do arquivo gravado é gerado pelo servidor a partir de
+        timestamp e hash, nunca aceito do cliente — o nome enviado pode
+        conter sequências de travessia de diretório.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: JPG, PNG, WEBP ou GIF, até 5 MB
+      responses:
+        '201':
+          description: Imagem recebida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imageUrl:
+                    type: string
+                    format: uri
+                    example: https://meuapp.local/uploads/1789739419824-169ce893ea19.jpg
+                  filename:
+                    type: string
+                    example: 1789739419824-169ce893ea19.jpg
+                  size:
+                    type: integer
+                    example: 184320
+        '400':
+          description: Formato não aceito ou arquivo acima do limite
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              examples:
+                formato:
+                  value:
+                    message: Formato de arquivo não permitido. Envie JPG, PNG, WEBP ou GIF.
+                tamanho:
+                  value:
+                    message: Arquivo excede o limite de 5 MB.
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+
+  /upload/imagem/{filename}:
+    delete:
+      tags: [Upload]
+      summary: Remove uma imagem do servidor
+      description: |
+        Usado ao substituir a foto de um produto, para não acumular arquivos
+        órfãos no volume.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 1789739419824-169ce893ea19.jpg
+      responses:
+        '204':
+          description: Imagem removida
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /health:
+    get:
+      tags: [Operação]
+      summary: Saúde da aplicação
+      description: |
+        Responde **200 mesmo em estado degradado**. O Redis fora do ar não
+        torna a API inútil — as consultas passam a vir do MySQL — e devolver
+        503 faria um orquestrador reiniciar um container saudável.
+
+        A degradação é comunicada pelo campo `status`, não pelo código HTTP.
+
+        Este endpoint fica fora do prefixo `/api`.
+      security: []
+      servers:
+        - url: https://meuapp.local
+        - url: http://localhost:3333
+      responses:
+        '200':
+          description: Aplicação respondendo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, degradado]
+                  servicos:
+                    type: object
+                    properties:
+                      api:
+                        type: string
+                        example: ok
+                      redis:
+                        type: string
+                        enum: [conectado, indisponivel]
+                  mensagem:
+                    type: string
+              examples:
+                saudavel:
+                  value:
+                    status: ok
+                    servicos: { api: ok, redis: conectado }
+                    mensagem: API Nós de Afeto funcionando.
+                degradado:
+                  value:
+                    status: degradado
+                    servicos: { api: ok, redis: indisponivel }
+                    mensagem: API funcionando sem cache; consultas servidas direto do banco.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token obtido em `POST /auth/login`.
+
+  parameters:
+    Pagina:
+      name: page
+      in: query
+      description: Página desejada, começando em 1.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    Limite:
+      name: limit
+      in: query
+      description: Itens por página.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    IdDoRecurso:
+      name: id
+      in: path
+      required: true
+      description: Identificador UUID do recurso.
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Usuario:
+      type: object
+      description: Dados públicos do usuário. A senha nunca é devolvida.
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Administrador
+        email:
+          type: string
+          format: email
+        cpf:
+          type: string
+          description: Somente dígitos.
+          example: '52998224725'
+        phone:
+          type: string
+          nullable: true
+        role:
+          type: string
+          enum: [CLIENT, ADMIN]
+        createdAt:
+          type: string
+          format: date-time
+
+    EntradaCadastro:
+      type: object
+      required: [name, email, cpf, password, confirmPassword]
+      properties:
+        name:
+          type: string
+          example: Camila Reis
+        email:
+          type: string
+          format: email
+        cpf:
+          type: string
+          description: Com ou sem máscara; validado pelos dígitos verificadores.
+          example: 529.982.247-25
+        phone:
+          type: string
+          nullable: true
+        password:
+          type: string
+          format: password
+        confirmPassword:
+          type: string
+          format: password
+          description: Precisa ser idêntico a `password`.
+
+    Produto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Bolsa em crochê com laço
+        description:
+          type: string
+        price:
+          type: number
+          format: double
+          example: 75.5
+        stock:
+          type: integer
+          example: 30
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+        categoryId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    EntradaProduto:
+      type: object
+      required: [name, description, price, stock, categoryId]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+          format: double
+          description: Precisa ser maior que zero.
+          exclusiveMinimum: true
+          minimum: 0
+        stock:
+          type: integer
+          description: Não pode ser negativo.
+          minimum: 0
+        categoryId:
+          type: string
+          format: uuid
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: URL devolvida por `POST /upload/imagem`.
+
+    Categoria:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Bolsas
+        createdAt:
+          type: string
+          format: date-time
+
+    MetaPaginacao:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 42
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        totalPages:
+          type: integer
+          example: 3
+
+    EntradaAtualizacaoUsuario:
+      type: object
+      description: |
+        Campos editaveis do perfil. O papel do usuario nao esta aqui, por
+        decisao de seguranca.
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          nullable: true
+        password:
+          type: string
+          format: password
+          description: Quando presente, substitui a senha atual.
+
+    Carrinho:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        itens:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemCarrinho'
+        total:
+          type: number
+          format: double
+          description: |
+            Soma calculada a partir dos precos vigentes no catalogo. Nao e
+            armazenado no banco: o carrinho reflete o preco atual ate o
+            fechamento do pedido.
+          example: 151.0
+        updatedAt:
+          type: string
+          format: date-time
+
+    ItemCarrinho:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          example: 2
+        product:
+          $ref: '#/components/schemas/Produto'
+
+    EntradaItemCarrinho:
+      type: object
+      required: [produtoId, quantidade]
+      properties:
+        produtoId:
+          type: string
+          format: uuid
+        quantidade:
+          type: integer
+          minimum: 1
+          example: 1
+
+    StatusPedido:
+      type: string
+      description: |
+        Situacao do pedido no fluxo de atendimento. Os valores abaixo
+        refletem o enum definido no schema do Prisma.
+      enum: [PENDING, CONFIRMED, SHIPPED, DELIVERED, CANCELLED]
+      example: PENDING
+
+    Pedido:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        total:
+          type: number
+          format: double
+          description: |
+            Valor congelado no fechamento. Nao acompanha reajustes
+            posteriores do catalogo.
+          example: 151.0
+        status:
+          $ref: '#/components/schemas/StatusPedido'
+        itens:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemPedido'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ItemPedido:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          example: 2
+        price:
+          type: number
+          format: double
+          description: |
+            Preco praticado no momento da compra, copiado do catalogo. E o
+            que permite ao historico de vendas permanecer correto quando o
+            produto e reajustado.
+          example: 75.5
+
+    Erro:
+      type: object
+      properties:
+        message:
+          type: string
+          description: |
+            Mensagem em português, destinada à interface. Não expõe detalhes
+            internos: falhas inesperadas respondem genericamente, e o
+            diagnóstico fica nos logs, localizável pelo `x-correlation-id`.
+
+  responses:
+    DadosInvalidos:
+      description: Dados de entrada inválidos
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            message: Preço deve ser maior que zero.
+
+    NaoAutenticado:
+      description: Token ausente, inválido ou expirado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            message: Token não fornecido.
+
+    NaoAutorizado:
+      description: Autenticado, mas sem permissão para a operação
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            message: Acesso restrito a administradores.
+
+    NaoEncontrado:
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            message: Produto não encontrado.

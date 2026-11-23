@@ -1,0 +1,28 @@
+# ──────────────────────────────────────────────────────────────
+#  Override de DESENVOLVIMENTO — acesso do app mobile
+#
+#  O docker-compose.yml principal mantém o backend isolado
+#  (somente o Nginx publica portas). Para o emulador Android
+#  alcançar a API durante o desenvolvimento, este override
+#  publica a porta do backend APENAS quando explicitamente usado.
+#
+#  Subir com o override:
+#      docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+#  Subir em modo normal (isolado, como na entrega):
+#      docker compose up -d
+#
+#  Assim o requisito de isolamento continua válido: a exposição
+#  é opt-in e documentada, não o comportamento padrão.
+# ──────────────────────────────────────────────────────────────
+
+services:
+  backend:
+    ports:
+      - "3333:3333"
+    environment:
+      # No emulador, as imagens são servidas pelo mesmo host alcançável.
+      BASE_URL: "http://10.0.2.2:3333"
+  db:
+    ports:
+      - "3307:3306"

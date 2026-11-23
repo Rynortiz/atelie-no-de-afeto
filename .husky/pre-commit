@@ -1,0 +1,13 @@
+echo "→ Verificando arquivos sensíveis no commit..."
+staged=$(git diff --cached --name-only)
+
+blocked=$(echo "$staged" | grep -E '(^|/)\.env$|(^|/)\.env\.[^/]*$|\.pem$|\.key$' | grep -v '\.env\.example$' || true)
+
+if [ -n "$blocked" ]; then
+  echo "✗ Commit bloqueado. Estes arquivos sensíveis não devem ser versionados:"
+  echo "$blocked" | sed 's/^/    /'
+  echo "  Remova do stage:  git restore --staged <arquivo>"
+  exit 1
+fi
+
+echo "✓ Nenhum segredo no stage."

@@ -1,3 +1,4 @@
+import { beforeAll, beforeEach, describe, it, expect, jest } from "@jest/globals";
 import request from "supertest";
 
 interface MockAuthService {
@@ -23,7 +24,9 @@ beforeAll(() => {
   mock = MockedAuthService.mock.instances[0] as jest.Mocked<AuthService>;
 });
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 describe("POST /api/auth/register", () => {
   const validBody = {

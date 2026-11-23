@@ -15,7 +15,7 @@ function AdminBanner() {
     <div className="home-admin-banner">
       <div className="home-admin-banner-content">
         <span>
-          👋 Você está logado como <strong>Administrador</strong>
+           Você está logado como <strong>Administrador</strong>
         </span>
         <Link to="/admin" className="home-admin-banner-btn">
           Acessar Painel Admin →
