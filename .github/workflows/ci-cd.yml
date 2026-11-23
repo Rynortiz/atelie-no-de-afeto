@@ -17,8 +17,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGEM_BACKEND: ${{ github.repository }}/backend
-  IMAGEM_FRONTEND: ${{ github.repository }}/frontend
 
 # Cancela execuções anteriores da mesma referência: não faz sentido
 # terminar o build de um commit que já foi substituído.
@@ -203,6 +201,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
+
+      - name: Normalizar o nome das imagens
+        # O GHCR exige nome de repositorio em minusculas, mas
+        # github.repository preserva as maiusculas do nome original.
+        # Sem esta conversao o push falha com "repository name must be
+        # lowercase".
+        run: |
+          REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGEM_BACKEND=${REPO}/backend" >> $GITHUB_ENV
+          echo "IMAGEM_FRONTEND=${REPO}/frontend" >> $GITHUB_ENV
 
       - name: Autenticar no registry
         uses: docker/login-action@v3
