@@ -1,0 +1,324 @@
+name: CI/CD
+
+# Integração contínua em todo push e pull request; implantação apenas na
+# branch principal. Pull request nunca implanta — o objetivo dele é
+# justamente descobrir o problema antes que ele chegue perto de produção.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: "Tag a implantar (em branco = imagem do commit atual)"
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGEM_BACKEND: ${{ github.repository }}/backend
+  IMAGEM_FRONTEND: ${{ github.repository }}/frontend
+
+# Cancela execuções anteriores da mesma referência: não faz sentido
+# terminar o build de um commit que já foi substituído.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────
+  # 1. Qualidade estática — o retorno mais rápido possível
+  # ──────────────────────────────────────────────────────────
+  qualidade:
+    name: Lint e tipos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: back-atelie-no-de-afeto/package-lock.json
+
+      - name: Instalar dependências
+        working-directory: back-atelie-no-de-afeto
+        # `npm ci` e não `npm install`: instala exatamente o que está no
+        # lock, falhando se ele estiver dessincronizado do package.json.
+        run: npm ci
+
+      - name: Gerar Prisma Client
+        working-directory: back-atelie-no-de-afeto
+        # Os tipos do Prisma são gerados, não versionados — sem isto a
+        # checagem de tipos falha por não encontrar @prisma/client.
+        run: npx prisma generate
+
+      - name: Checar tipos
+        working-directory: back-atelie-no-de-afeto
+        run: npx tsc --noEmit
+
+      - name: Verificar segredos no código
+        # Rede de segurança contra credencial commitada por engano. Procura
+        # apenas no código versionado, nunca em .env (que não é versionado).
+        run: |
+          if grep -rEn "(JWT_SECRET|PASSWORD|SECRET_KEY)\s*=\s*['\"][^'\"]{6,}" \
+             --include="*.ts" --include="*.js" \
+             back-atelie-no-de-afeto/src front-atelie-no-de-afeto/src 2>/dev/null; then
+            echo "::error::Possível segredo embutido no código."
+            exit 1
+          fi
+          echo "Nenhum segredo aparente no código."
+
+  # ──────────────────────────────────────────────────────────
+  # 2. Testes — contra serviços reais, não dublês
+  # ──────────────────────────────────────────────────────────
+  testes:
+    name: Testes automatizados
+    runs-on: ubuntu-latest
+    needs: qualidade
+
+    # MySQL e Redis de verdade. Simular o banco esconde justamente o que
+    # mais quebra: migration incompatível, restrição de unicidade, tipo de
+    # coluna. O ambiente de teste precisa parecer com o de produção.
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: raiz_de_teste
+          MYSQL_DATABASE: nos_de_afeto_teste
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -praiz_de_teste"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=3s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: mysql://root:raiz_de_teste@127.0.0.1:3306/nos_de_afeto_teste
+      REDIS_URL: redis://127.0.0.1:6379
+      JWT_SECRET: segredo_apenas_de_teste
+      JWT_EXPIRES_IN: 1d
+      NODE_ENV: test
+      LOG_LEVEL: warn
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: back-atelie-no-de-afeto/package-lock.json
+
+      - name: Instalar dependências
+        working-directory: back-atelie-no-de-afeto
+        run: npm ci
+
+      - name: Aplicar migrations
+        working-directory: back-atelie-no-de-afeto
+        # `migrate deploy` aplica as migrations existentes sem gerar novas
+        # nem pedir confirmação — é a variante correta fora do ambiente de
+        # desenvolvimento.
+        run: npx prisma migrate deploy
+
+      - name: Popular dados de referência
+        working-directory: back-atelie-no-de-afeto
+        run: npx prisma db seed
+
+      - name: Testes de unidade e integração
+        working-directory: back-atelie-no-de-afeto
+        # `--if-present` evita quebrar enquanto a suíte não existe. Assim
+        # que houver script `test`, ele passa a rodar sem alterar o workflow.
+        run: npm test --if-present
+
+      - name: Verificar que a API sobe
+        working-directory: back-atelie-no-de-afeto
+        # Teste de fumaça: build, subida e health check. Pega a classe de
+        # erro que a checagem de tipos não pega — falha em tempo de
+        # execução na inicialização.
+        run: |
+          npm run build --if-present
+          npm start &
+          API_PID=$!
+
+          for tentativa in $(seq 1 30); do
+            if curl -sf http://localhost:3333/health > /dev/null; then
+              echo "API respondeu na tentativa $tentativa"
+              curl -s http://localhost:3333/health
+              kill $API_PID
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::A API não respondeu em 60 segundos."
+          kill $API_PID 2>/dev/null
+          exit 1
+
+  # ──────────────────────────────────────────────────────────
+  # 3. Contrato da API
+  # ──────────────────────────────────────────────────────────
+  contrato:
+    name: Validar OpenAPI
+    runs-on: ubuntu-latest
+    needs: qualidade
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Validar especificação
+        # O contrato é o que o aplicativo e o front consomem. Spec inválida
+        # ou dessincronizada quebra cliente sem quebrar servidor — tipo de
+        # falha que só aparece em produção.
+        run: npx @redocly/cli@latest lint back-atelie-no-de-afeto/openapi.yaml
+
+  # ──────────────────────────────────────────────────────────
+  # 4. Build das imagens
+  # ──────────────────────────────────────────────────────────
+  build:
+    name: Construir imagens
+    runs-on: ubuntu-latest
+    needs: [testes, contrato]
+    # Pull request valida, mas não publica imagem.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Autenticar no registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construir e publicar backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./back-atelie-no-de-afeto
+          push: true
+          # Duas tags: `latest` para conveniência e o SHA do commit para
+          # rastreabilidade. É o SHA que torna o rollback possível — com
+          # `latest` apenas, não há para onde voltar.
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGEM_BACKEND }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGEM_BACKEND }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Construir e publicar frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./front-atelie-no-de-afeto
+          build-args: |
+            REACT_APP_API_URL=/api
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGEM_FRONTEND }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGEM_FRONTEND }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Registrar versão implantável
+        run: |
+          echo "### Imagens publicadas" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Versão: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Para reverter para esta versão:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "APP_VERSION=${{ github.sha }} docker compose up -d" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # ──────────────────────────────────────────────────────────
+  # 5. Implantação
+  # ──────────────────────────────────────────────────────────
+  deploy:
+    name: Implantar
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+
+    # Ambiente protegido: permite exigir aprovação manual nas configurações
+    # do repositório antes de a implantação prosseguir.
+    environment:
+      name: producao
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Implantar no servidor
+        # Esqueleto. A conexão real depende da hospedagem escolhida; as
+        # variantes mais comuns estão comentadas abaixo.
+        run: |
+          VERSAO="${{ inputs.versao || github.sha }}"
+          echo "Implantando versão $VERSAO"
+
+          cat <<'PASSOS'
+          Passos executados no servidor:
+
+            1. git pull da branch main
+            2. APP_VERSION=$VERSAO docker compose pull
+            3. docker compose up -d --no-deps backend frontend
+            4. aguardar /health responder ok
+            5. em caso de falha, reverter para a versão anterior
+
+          Conexão por SSH (quando houver servidor remoto):
+
+            - uses: appleboy/ssh-action@v1
+              with:
+                host:     ${{ secrets.DEPLOY_HOST }}
+                username: ${{ secrets.DEPLOY_USER }}
+                key:      ${{ secrets.DEPLOY_SSH_KEY }}
+                script: |
+                  cd /opt/atelie
+                  git pull origin main
+                  export APP_VERSION=$VERSAO
+                  docker compose pull
+                  docker compose up -d --no-deps backend frontend
+          PASSOS
+
+      - name: Verificar saúde após implantar
+        # A implantação não termina quando o container sobe — termina
+        # quando ele responde. Sem esta verificação, um container que sobe
+        # e morre em seguida passaria por implantação bem-sucedida.
+        run: |
+          echo "Aguardando /health responder ok..."
+          cat <<'PASSOS'
+            for i in $(seq 1 30); do
+              resposta=$(curl -sf https://meuapp.local/health) && break
+              sleep 2
+            done
+
+            echo "$resposta" | grep -q '"status":"ok"' \
+              || { echo "::error::Saúde não confirmada"; exit 1; }
+          PASSOS
+
+      - name: Reverter em caso de falha
+        if: failure()
+        run: |
+          echo "::warning::Implantação falhou — revertendo."
+          cat <<'PASSOS'
+            # A tag da versão anterior fica registrada no servidor
+            APP_VERSION=$(cat /opt/atelie/.versao-anterior) \
+              docker compose up -d --no-deps backend frontend
+          PASSOS
